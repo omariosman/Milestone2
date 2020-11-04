@@ -1,0 +1,136 @@
+`timescale 1ns / 1ps
+
+module RISCVHandler( input clk, rst); 
+ 
+//PC output
+wire [31:0] PC_output;
+
+
+wire [31:0] instr_mem_out;
+instrMemory mod1(PC_output[7:2],instr_mem_out);
+
+wire [31:0] first_adder_output;
+RippleCarryAdder mod2(PC_output, 32'd4,0,first_adder_output);
+
+wire Branch, MemRead, MemtoReg,  MemWrite, ALUSrc, RegWrite;
+wire [1:0] ALUOp;
+
+wire [1:0] mux_spade_selection;
+wire r_check;
+/*
+module control_unit(input [4:0] instr, 
+output reg Branch, MemRead, MemtoReg,  MemWrite, ALUSrc, RegWrite, output reg [1:0] ALUOp,
+output reg [1:0] mux_spade_selection, output reg r_check);
+*/
+control_unit mod3 (instr_mem_out[6:2],Branch, MemRead, MemtoReg,  MemWrite,
+ ALUSrc, RegWrite,ALUOp, mux_spade_selection, r_check);
+ 
+ /*
+ 
+ module RegFile (
+ input clk, rst,
+ input [4:0] readreg1, readreg2, writereg,
+ input [31:0] writedata,
+ input regwrite,
+ output [31:0] readdata1, readdata2 );
+  
+ */
+wire [31:0] jal_mux_out;
+ wire [31:0] regfileout1, regfileout2, final_out;
+ RegFile mod4(clk, rst,
+ instr_mem_out[19:15],instr_mem_out[24:20], instr_mem_out[11:7],
+ jal_mux_out, RegWrite, regfileout1, regfileout2);
+
+wire [31:0] immgen_out;
+rv32_ImmGen mod5(instr_mem_out, immgen_out);
+
+wire [31:0] secondALUin;
+muxarray mod6( regfileout2, immgen_out, ALUSrc, secondALUin);
+
+wire [3:0] ALU_selection;
+wire [1:0] state;
+wire sign;
+/*
+module ALU_control_unit(input [1:0] ALUOp, input [2:0] instr14_12, input instr30, input r_check, output reg [3:0] ALU_selection,
+ output reg [1:0] state, output reg sign);
+*/
+ALU_control_unit mod7(ALUOp, instr_mem_out [14:12] , instr_mem_out [30],r_check, ALU_selection, state, sign);
+
+//wire zf;
+wire [31:0] ALUout;
+wire cf, zf, vf, sf;
+/*
+module prv32_ALU(
+	input   wire [31:0] a, b,
+	input   wire [4:0]  shamt,
+	output  reg  [31:0] r,
+	output  wire        cf, zf, vf, sf,
+	input   wire [3:0]  alufn
+);
+
+*/
+
+prv32_ALU mod8(
+regfileout1, secondALUin,
+instr_mem_out[24:20],
+ALUout,
+cf, zf, vf, sf,
+ALU_selection
+);
+
+
+//Branch Output
+/*
+module branchOutput(
+    input [2:0]funct3, 
+    input branch, //branch 1/0 from the control unit
+    input Z,        //zero flag
+    input C,        //carry
+    input V,        //overflow
+    input S,        //sign 
+    output reg branch_output
+);
+*/
+
+
+wire branch_output;
+branchOutput branch_control(instr_mem_out[14:12], Branch, zf, cf, vf, sf, branch_output);
+
+wire [31:0] shift_out;
+shift_one mod9(immgen_out, shift_out);
+
+wire [31:0] second_adder_output;
+RippleCarryAdder mod10(PC_output, shift_out,0,second_adder_output);
+
+wire and_out;
+assign and_out= branch_output;
+
+wire[31:0] PC_input; 
+muxarray mod11( first_adder_output, second_adder_output, and_out, PC_input);
+
+/*
+module PC_register(input [31:0] a, input clk, input rst, input sel, output[31:0] out );
+*/
+PC_register mod14( PC_input, clk, rst,1'b1,PC_output );
+
+
+/*
+module DataMem
+(input clk, input MemRead, input MemWrite,
+input [5:0] addr, input [31:0] data_in, input state, input sign, output reg [31:0] data_out);
+
+*/
+
+wire [31:0] datamemout;
+DataMem mod12( clk, MemRead, MemWrite,
+ALUout[7:2], regfileout2, state, sign, datamemout);
+
+muxarray mod13( ALUout, datamemout, MemtoReg, final_out);
+
+
+ /*Mux for JAL/JALR/AUIPC */
+ mux_4x1 jal_mux(second_adder_output, first_adder_output, final_out, mux_spade_selection, jal_mux_out);
+ 
+
+
+endmodule
